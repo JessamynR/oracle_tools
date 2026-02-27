@@ -97,21 +97,101 @@ ipcMain.handle('hcm:lookup', async (_event, { baseUrl, username, password, searc
     }
 
     let autoProvRules = [];
-    let autoProvRuleHeaders = [];
     let autoProvError = null;
     try {
-      const { rows, headers } = await runAutoProvisioningReport(baseUrl, username, password, positionCode);
-      autoProvRules = rows;
-      autoProvRuleHeaders = headers;
+      autoProvRules = await runAutoProvisioningReport(baseUrl, username, password, positionCode);
     } catch (err) {
       autoProvError = err.message;
     }
 
-    return { ok: true, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvRuleHeaders, autoProvError, personNumber, displayName };
+    return { ok: true, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError, personNumber, displayName };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
+
+// ── Shared: fetch with timeout ────────────────────────────────────────────────
+
+async function fetchWithTimeout(url, options = {}, ms = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error(`Request timed out after ${ms / 1000}s`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Shared: SOAP report runner ────────────────────────────────────────────────
+//
+// Handles the SOAP envelope, network call, fault detection, and xlsx decoding.
+// Returns the raw SheetJS 2D array for the caller to parse.
+
+async function runSoapReport(baseUrl, username, password, reportPath) {
+  const SOAP_ENDPOINT = `${baseUrl.replace(/\/$/, '')}/xmlpserver/services/PublicReportService`;
+
+  function extractElement(xml, localName) {
+    const re = new RegExp(
+      `<[^\\s>/]*:?${localName}[^>]*>([\\s\\S]*?)<\\/[^\\s>/]*:?${localName}>`, 'i'
+    );
+    return (xml.match(re) ?? [])[1]?.trim() ?? null;
+  }
+
+  function soapFaultMessage(xml) {
+    const fault = extractElement(xml, 'Fault');
+    if (!fault) return null;
+    return extractElement(fault, 'faultstring')
+      ?? extractElement(fault, 'Text')
+      ?? extractElement(fault, 'message')
+      ?? `(raw fault) ${fault.replace(/\s+/g, ' ').slice(0, 400)}`;
+  }
+
+  const envelope = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+<soap:Body>
+<runReport xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService">
+<reportRequest>
+<reportAbsolutePath>${reportPath}</reportAbsolutePath>
+<attributeFormat>xlsx</attributeFormat>
+<sizeOfDataChunkDownload>-1</sizeOfDataChunkDownload>
+</reportRequest>
+<userID>${username}</userID>
+<password>${password}</password>
+</runReport>
+</soap:Body>
+</soap:Envelope>`;
+
+  const response = await fetchWithTimeout(SOAP_ENDPOINT, {
+    method : 'POST',
+    headers: {
+      'Content-Type': 'text/xml; charset=utf-8',
+      'SOAPAction'  : '"runReport"',
+    },
+    body: envelope,
+  });
+
+  const responseText = await response.text();
+
+  const fault = soapFaultMessage(responseText);
+  if (fault) throw new Error(`SOAP fault: ${fault}`);
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${responseText.slice(0, 300)}`);
+  }
+
+  const b64 = extractElement(responseText, 'reportBytes');
+  if (!b64) {
+    throw new Error(`No reportBytes in SOAP response.\nSnippet: ${responseText.slice(0, 300)}`);
+  }
+
+  const fileBuffer = Buffer.from(b64, 'base64');
+  const workbook   = XLSX.read(fileBuffer, { type: 'buffer' });
+  const worksheet  = workbook.Sheets[workbook.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+}
 
 // ── IPC: hcm:ccreport ────────────────────────────────────────────────────────
 //
@@ -135,90 +215,17 @@ ipcMain.handle('hcm:ccreport', async (_event, { baseUrl, username, password, cos
 
 // ── Cost center report (SOAP 1.1 → PublicReportService) ──────────────────────
 //
-// Endpoint : {baseUrl}/xmlpserver/services/PublicReportService
-// Report   : /Custom/DeptCostCenterMgrRpt.xdo
-// Auth     : credentials embedded in SOAP body (from user input)
+// Report: /Custom/Jessamyn/CostCenterManager/DeptCostCenterMgr.xdo
+// Known columns: DEPARTMENT NAME, COST CENTER, COST CENTER MANAGER,
+//   CC MANAGER STATUS, COST_CENTER_MGR_EMAIL, COST_CENTER_MGR_NUM
 
-// costCenters — string[] of trimmed cost center values.
-// Fetches the full report once and returns one result per requested cost center.
 async function runCostCenterReport(baseUrl, username, password, costCenters) {
-  const SOAP_ENDPOINT = `${baseUrl.replace(/\/$/, '')}/xmlpserver/services/PublicReportService`;
+  const raw = await runSoapReport(
+    baseUrl, username, password,
+    '/Custom/Jessamyn/CostCenterManager/DeptCostCenterMgr.xdo'
+  );
 
-  // ── SOAP response helpers ─────────────────────────────────────────────────
-
-  function extractElement(xml, localName) {
-    const re = new RegExp(
-      `<[^\\s>/]*:?${localName}[^>]*>([\\s\\S]*?)<\\/[^\\s>/]*:?${localName}>`, 'i'
-    );
-    return (xml.match(re) ?? [])[1]?.trim() ?? null;
-  }
-
-  function soapFaultMessage(xml) {
-    const fault = extractElement(xml, 'Fault');
-    if (!fault) return null;
-    return extractElement(fault, 'faultstring')
-      ?? extractElement(fault, 'Text')
-      ?? extractElement(fault, 'message')
-      ?? `(raw fault) ${fault.replace(/\s+/g, ' ').slice(0, 400)}`;
-  }
-
-  // ── SOAP 1.1 request — xlsx format for in-memory parsing ─────────────────
-  const envelope = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-<soap:Body>
-<runReport xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService">
-<reportRequest>
-<reportAbsolutePath>/Custom/Jessamyn/CostCenterManager/DeptCostCenterMgr.xdo</reportAbsolutePath>
-<attributeFormat>xlsx</attributeFormat>
-<sizeOfDataChunkDownload>-1</sizeOfDataChunkDownload>
-</reportRequest>
-<userID>${username}</userID>
-<password>${password}</password>
-</runReport>
-</soap:Body>
-</soap:Envelope>`;
-
-  let response;
-  try {
-    response = await fetch(SOAP_ENDPOINT, {
-      method : 'POST',
-      headers: {
-        'Content-Type': 'text/xml; charset=utf-8',
-        'SOAPAction'  : '"runReport"',
-      },
-      body: envelope,
-    });
-  } catch (err) {
-    throw new Error(`Network error reaching SOAP endpoint: ${err.message}`);
-  }
-
-  const responseText = await response.text();
-
-  const fault = soapFaultMessage(responseText);
-  if (fault) throw new Error(`SOAP fault: ${fault}`);
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${responseText.slice(0, 300)}`);
-  }
-
-  const b64 = extractElement(responseText, 'reportBytes');
-  if (!b64) {
-    throw new Error(`No reportBytes in SOAP response.\nSnippet: ${responseText.slice(0, 300)}`);
-  }
-
-  // ── Parse xlsx in-memory with SheetJS ────────────────────────────────────
-  const fileBuffer = Buffer.from(b64, 'base64');
-  const workbook   = XLSX.read(fileBuffer, { type: 'buffer' });
-  const worksheet  = workbook.Sheets[workbook.SheetNames[0]];
-
-  // Parse as raw 2D array.
-  // Report structure (confirmed): row 0 = title, row 1 = column headers, row 2+ = data.
-  const raw = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-
-  // Row 1 (index 1) is always the header row — row 0 is the report title and
-  // must be skipped.
-  const headerRowIdx = 1;
-
+  // Row 0 = report title, row 1 = column headers, row 2+ = data.
   if (raw.length < 2) {
     throw new Error(
       `Report has fewer than 2 rows — cannot locate header row.\n` +
@@ -226,12 +233,9 @@ async function runCostCenterReport(baseUrl, username, password, costCenters) {
     );
   }
 
-  // Normalise headers to trimmed upper-case for reliable matching.
-  const headers = raw[headerRowIdx].map(h => String(h).trim().toUpperCase());
-
-  // Build plain objects from every non-empty data row that follows the header.
+  const headers = raw[1].map(h => String(h).trim().toUpperCase());
   const rows = raw
-    .slice(headerRowIdx + 1)
+    .slice(2)
     .filter(row => row.some(cell => String(cell).trim() !== ''))
     .map(row => {
       const obj = {};
@@ -239,34 +243,24 @@ async function runCostCenterReport(baseUrl, username, password, costCenters) {
       return obj;
     });
 
-  if (rows.length === 0) {
-    throw new Error('Report returned no data rows.');
-  }
+  if (rows.length === 0) throw new Error('Report returned no data rows.');
 
-  // ── Find the cost center row using the COST CENTER column ─────────────────
-  // Known columns (confirmed from report): DEPARTMENT NAME, DEPARTMENT STATUS,
-  // DEPARTMENT ID, COST CENTER, COST CENTER MANAGER, CC MANAGER STATUS
   const exactCol = (...candidates) =>
     candidates.find(c => headers.includes(c.toUpperCase()))?.toUpperCase() ?? null;
 
-  const ccCol         = exactCol('COST CENTER', 'COST_CENTER');
-  const mgrCol        = exactCol('COST CENTER MANAGER', 'CC MANAGER');
-  const deptCol       = exactCol('DEPARTMENT NAME', 'DEPT NAME');
-  const deptStatusCol = exactCol('DEPARTMENT STATUS', 'DEPT STATUS');
-  const mgrStatusCol  = exactCol('CC MANAGER STATUS', 'MANAGER STATUS');
-  const mgrEmailCol   = exactCol('COST_CENTER_MGR_EMAIL', 'COST CENTER MGR EMAIL');
-  const mgrNumCol     = exactCol('COST_CENTER_MGR_NUM', 'COST CENTER MGR NUM');
+  const ccCol        = exactCol('COST CENTER', 'COST_CENTER');
+  const mgrCol       = exactCol('COST CENTER MANAGER', 'CC MANAGER');
+  const deptCol      = exactCol('DEPARTMENT NAME', 'DEPT NAME');
+  const mgrStatusCol = exactCol('CC MANAGER STATUS', 'MANAGER STATUS');
+  const mgrEmailCol  = exactCol('COST_CENTER_MGR_EMAIL', 'COST CENTER MGR EMAIL');
+  const mgrNumCol    = exactCol('COST_CENTER_MGR_NUM', 'COST CENTER MGR NUM');
 
   if (!ccCol) {
-    throw new Error(
-      `No "COST CENTER" column found in report.\nColumns: ${headers.join(', ')}`
-    );
+    throw new Error(`No "COST CENTER" column found in report.\nColumns: ${headers.join(', ')}`);
   }
 
-  // Pre-build the set of available cost centers once (used in "not found" messages).
   const available = [...new Set(rows.map(r => r[ccCol]).filter(Boolean))];
 
-  // Map each requested cost center to its result (or an error entry if not found).
   return costCenters.map(cc => {
     const match = rows.find(r => r[ccCol] === cc);
     if (!match) {
@@ -277,12 +271,11 @@ async function runCostCenterReport(baseUrl, username, password, costCenters) {
     }
     return {
       costCenter      : cc,
-      departmentName  : deptCol       ? (match[deptCol]       || null) : null,
-      departmentStatus: deptStatusCol ? (match[deptStatusCol] || null) : null,
-      manager         : mgrCol        ? (match[mgrCol]        || null) : null,
-      managerStatus   : mgrStatusCol  ? (match[mgrStatusCol]  || null) : null,
-      managerEmail    : mgrEmailCol   ? (match[mgrEmailCol]   || null) : null,
-      managerPersonNum: mgrNumCol     ? (match[mgrNumCol]     || null) : null,
+      departmentName  : deptCol      ? (match[deptCol]      || null) : null,
+      manager         : mgrCol       ? (match[mgrCol]       || null) : null,
+      managerStatus   : mgrStatusCol ? (match[mgrStatusCol] || null) : null,
+      managerEmail    : mgrEmailCol  ? (match[mgrEmailCol]  || null) : null,
+      managerPersonNum: mgrNumCol    ? (match[mgrNumCol]    || null) : null,
       error           : null,
     };
   });
@@ -291,81 +284,16 @@ async function runCostCenterReport(baseUrl, username, password, costCenters) {
 // ── Auto-provisioning rules report (SOAP 1.1 → PublicReportService) ──────────
 //
 // Report: /Custom/Jessamyn/Auto-Provisioning Rules/Auto-Provisioning Rules.xdo
-// Returns all rows from the report where the position code column matches
-// the given positionCode, along with the full list of column headers.
+// Known columns: MAPPING_NAME, DEPARTMENT, POSITION_CODE, JOB, ROLE
+// Returns rows matching positionCode.
 
 async function runAutoProvisioningReport(baseUrl, username, password, positionCode) {
-  const SOAP_ENDPOINT = `${baseUrl.replace(/\/$/, '')}/xmlpserver/services/PublicReportService`;
+  const raw = await runSoapReport(
+    baseUrl, username, password,
+    '/Custom/Jessamyn/Auto-Provisioning Rules/Auto-Provisioning Rules.xdo'
+  );
 
-  function extractElement(xml, localName) {
-    const re = new RegExp(
-      `<[^\\s>/]*:?${localName}[^>]*>([\\s\\S]*?)<\\/[^\\s>/]*:?${localName}>`, 'i'
-    );
-    return (xml.match(re) ?? [])[1]?.trim() ?? null;
-  }
-
-  function soapFaultMessage(xml) {
-    const fault = extractElement(xml, 'Fault');
-    if (!fault) return null;
-    return extractElement(fault, 'faultstring')
-      ?? extractElement(fault, 'Text')
-      ?? extractElement(fault, 'message')
-      ?? `(raw fault) ${fault.replace(/\s+/g, ' ').slice(0, 400)}`;
-  }
-
-  const envelope = `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-<soap:Body>
-<runReport xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService">
-<reportRequest>
-<reportAbsolutePath>/Custom/Jessamyn/Auto-Provisioning Rules/Auto-Provisioning Rules.xdo</reportAbsolutePath>
-<attributeFormat>xlsx</attributeFormat>
-<sizeOfDataChunkDownload>-1</sizeOfDataChunkDownload>
-</reportRequest>
-<userID>${username}</userID>
-<password>${password}</password>
-</runReport>
-</soap:Body>
-</soap:Envelope>`;
-
-  let response;
-  try {
-    response = await fetch(SOAP_ENDPOINT, {
-      method : 'POST',
-      headers: {
-        'Content-Type': 'text/xml; charset=utf-8',
-        'SOAPAction'  : '"runReport"',
-      },
-      body: envelope,
-    });
-  } catch (err) {
-    throw new Error(`Network error reaching SOAP endpoint: ${err.message}`);
-  }
-
-  const responseText = await response.text();
-
-  const fault = soapFaultMessage(responseText);
-  if (fault) throw new Error(`SOAP fault: ${fault}`);
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${responseText.slice(0, 300)}`);
-  }
-
-  const b64 = extractElement(responseText, 'reportBytes');
-  if (!b64) {
-    throw new Error(`No reportBytes in SOAP response.\nSnippet: ${responseText.slice(0, 300)}`);
-  }
-
-  const fileBuffer = Buffer.from(b64, 'base64');
-  const workbook   = XLSX.read(fileBuffer, { type: 'buffer' });
-  const worksheet  = workbook.Sheets[workbook.SheetNames[0]];
-
-  // Confirmed columns: MAPPING_NAME, DEPARTMENT, POSITION_CODE, JOB, ROLE.
-  // Header row index varies — some report layouts include a title row (row 0) before
-  // the column headers; others start headers at row 0. Detect by finding whichever
-  // row contains the known POSITION_CODE column name.
-  const raw = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-
+  // Detect header row by finding whichever row contains the known POSITION_CODE column.
   const KNOWN_COL = 'POSITION_CODE';
   const headerRowIdx = raw.findIndex(row =>
     row.map(c => String(c).trim().toUpperCase()).includes(KNOWN_COL)
@@ -379,7 +307,6 @@ async function runAutoProvisioningReport(baseUrl, username, password, positionCo
   }
 
   const headers = raw[headerRowIdx].map(h => String(h).trim().toUpperCase());
-
   const rows = raw
     .slice(headerRowIdx + 1)
     .filter(row => row.some(cell => String(cell).trim() !== ''))
@@ -389,7 +316,7 @@ async function runAutoProvisioningReport(baseUrl, username, password, positionCo
       return obj;
     });
 
-  return { rows: rows.filter(r => r[KNOWN_COL] === positionCode), headers };
+  return rows.filter(r => r[KNOWN_COL] === positionCode);
 }
 
 // ── Worker lookup (ported from lookup-position.js) ───────────────────────────
@@ -406,7 +333,7 @@ async function getWorkerInfo(baseUrl, username, password, personNumber) {
 
   const url = `${baseUrl}/hcmRestApi/resources/latest/workers?${params}`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     headers: {
       Authorization: `Basic ${token}`,
       'Content-Type': 'application/json',
@@ -486,7 +413,7 @@ async function fetchPositionName(baseUrl, token, positionCode) {
   for (const q of [`PositionCode='${esc}'`, `Code='${esc}'`]) {
     try {
       const params = new URLSearchParams({ q, limit: '1' });
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${baseUrl}/hcmRestApi/resources/latest/positions?${params}`,
         { headers }
       );
@@ -517,7 +444,19 @@ async function findWorkersByName(baseUrl, token, name) {
     'Content-Type': 'application/json',
   };
 
+  // If the input contains a space, try FirstName + LastName combination first.
+  const spaceIdx = name.indexOf(' ');
+  const fullNameAttempts = spaceIdx !== -1 ? (() => {
+    const fn = name.slice(0, spaceIdx).replace(/'/g, "''");
+    const ln = name.slice(spaceIdx + 1).replace(/'/g, "''");
+    return [
+      { endpoint: 'workers',       q: `FirstName='${fn}' AND LastName='${ln}'` },
+      { endpoint: 'publicWorkers', q: `FirstName='${fn}' AND LastName='${ln}'` },
+    ];
+  })() : [];
+
   const attempts = [
+    ...fullNameAttempts,
     // /workers is tried first — confirmed accessible for this account.
     { endpoint: 'workers',       q: `FirstName='${escaped}'`   },
     { endpoint: 'workers',       q: `LastName='${escaped}'`    },
@@ -534,7 +473,7 @@ async function findWorkersByName(baseUrl, token, name) {
     try {
       const params = new URLSearchParams({ q, limit: '25' });
       const url = `${baseUrl}/hcmRestApi/resources/latest/${endpoint}?${params}`;
-      response = await fetch(url, { headers });
+      response = await fetchWithTimeout(url, { headers });
     } catch {
       continue; // network error — try the next attempt
     }
@@ -573,7 +512,7 @@ async function getAssignedRoles(baseUrl, username, password, personId) {
 
   // Step 1 — find the user account for this person.
   const accountParams = new URLSearchParams({ q: `PersonId=${personId}`, limit: '1' });
-  const accountRes = await fetch(
+  const accountRes = await fetchWithTimeout(
     `${baseUrl}/hcmRestApi/resources/latest/userAccounts?${accountParams}`,
     { headers }
   );
@@ -598,7 +537,7 @@ async function getAssignedRoles(baseUrl, username, password, personId) {
     throw new Error('Could not determine user account URL — self link missing from response');
   }
 
-  const rolesRes = await fetch(`${selfHref}/child/userAccountRoles?limit=500`, { headers });
+  const rolesRes = await fetchWithTimeout(`${selfHref}/child/userAccountRoles?limit=500`, { headers });
 
   if (!rolesRes.ok) {
     const body = await rolesRes.text().catch(() => '');

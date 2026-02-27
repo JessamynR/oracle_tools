@@ -483,7 +483,7 @@
         if (result.candidates) {
           showCandidates(result.candidates);
         } else {
-          showSuccess(result.personNumber, result.displayName, result.positionCode, result.positionName, result.provisioningRules, result.rulesError, result.autoProvRules, result.autoProvRuleHeaders, result.autoProvError);
+          showSuccess(result);
         }
       } catch (err) {
         showError(err.message);
@@ -498,15 +498,14 @@
       if (!result.ok) throw new Error(result.error);
       if (result.candidates) return { candidates: result.candidates };
       return {
-        positionCode        : result.positionCode,
-        positionName        : result.positionName,
-        provisioningRules   : result.provisioningRules,
-        rulesError          : result.rulesError,
-        autoProvRules       : result.autoProvRules,
-        autoProvRuleHeaders : result.autoProvRuleHeaders,
-        autoProvError       : result.autoProvError,
-        personNumber        : result.personNumber,
-        displayName         : result.displayName,
+        positionCode     : result.positionCode,
+        positionName     : result.positionName,
+        provisioningRules: result.provisioningRules,
+        rulesError       : result.rulesError,
+        autoProvRules    : result.autoProvRules,
+        autoProvError    : result.autoProvError,
+        personNumber     : result.personNumber,
+        displayName      : result.displayName,
       };
     }
 
@@ -531,7 +530,7 @@
       lookup();
     }
 
-    function showSuccess(personNumber, displayName, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvRuleHeaders, autoProvError) {
+    function showSuccess({ personNumber, displayName, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError }) {
       const el = document.getElementById('result');
       el.className = 'result success';
 
@@ -600,7 +599,7 @@
             : (autoProvRules ?? []).length === 0
               ? `<p class="no-rules">No auto-provisioning rules found for this position.</p>`
               : (() => {
-                  const cols = (autoProvRuleHeaders ?? []).filter(h => h !== '');
+                  const cols = ['MAPPING_NAME', 'DEPARTMENT', 'JOB', 'ROLE'];
                   return `<table class="rules-table">
                     <thead><tr>${cols.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
                     <tbody>
