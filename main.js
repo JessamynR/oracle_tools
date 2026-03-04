@@ -57,6 +57,60 @@ ipcMain.handle('hcm:saveSettings', (_event, { baseUrl, username }) => {
   }
 });
 
+// ── IPC: hcm:ccHierarchy ─────────────────────────────────────────────────────
+//
+// Runs the cost center hierarchy SOAP report and returns all CHILD_VALUE entries
+// (column E) where HIERARCHY_PATH (column B) contains _<costCenterCode>_
+// and the child value does NOT start with 'C'.
+// Returns { ok: true, values: ['1001', '1002', ...] }
+//       | { ok: false, error: '...' }
+
+ipcMain.handle('hcm:ccHierarchy', async (_event, { baseUrl, username, password, costCenterCode }) => {
+  try {
+    const raw = await runSoapReport(
+      baseUrl, username, password,
+      '/Custom/Jessamyn/AccountHierarchy/CostCenterHierarchy.xdo'
+    );
+
+    const KNOWN_COL = 'HIERARCHY_PATH';
+    const headerRowIdx = raw.findIndex(row =>
+      row.map(c => String(c).trim().toUpperCase()).includes(KNOWN_COL)
+    );
+
+    if (headerRowIdx === -1) {
+      return {
+        ok: false,
+        error: `"${KNOWN_COL}" column not found. First row: ${JSON.stringify(raw[0] ?? [])}`,
+      };
+    }
+
+    const headers      = raw[headerRowIdx].map(h => String(h).trim().toUpperCase());
+    const hierarchyIdx = headers.indexOf(KNOWN_COL);
+
+    // Find CHILD_VALUE column by header name; fall back to column E (index 4).
+    const childColIdx = (() => {
+      const idx = headers.findIndex(h => h === 'CHILD_VALUE' || h === 'CHILD VALUE' || h === 'CHILDVALUE');
+      return idx !== -1 ? idx : 4;
+    })();
+
+    const pattern = costCenterCode; // e.g. C480
+
+    const values = raw
+      .slice(headerRowIdx + 1)
+      .filter(row => row.some(c => String(c).trim() !== ''))
+      .filter(row => {
+        const hierarchyPath = String(row[hierarchyIdx] ?? '').trim();
+        const childValue    = String(row[childColIdx]  ?? '').trim();
+        return hierarchyPath.includes(pattern) && childValue && !childValue.startsWith('C');
+      })
+      .map(row => String(row[childColIdx] ?? '').trim());
+
+    return { ok: true, values: [...new Set(values)] };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // ── IPC: hcm:lookup ──────────────────────────────────────────────────────────
 //
 // Receives { baseUrl, username, password, searchTerm } from the renderer.

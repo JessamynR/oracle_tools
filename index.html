@@ -266,6 +266,15 @@
       font-size: 0.75rem;
     }
 
+    .role-link {
+      color: inherit;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      cursor: pointer;
+    }
+
+    .role-link:hover { text-decoration-style: solid; }
+
     .no-rules {
       font-size: 0.82rem;
       opacity: 0.6;
@@ -455,8 +464,8 @@
   <script>
     // ── Restore saved settings on startup ──────────────────────────────────────
     window.hcmAPI.getSettings().then(s => {
-      if (s.baseUrl)  document.getElementById('baseUrl').value  = s.baseUrl;
-      if (s.username) document.getElementById('username').value = s.username;
+      if (s.baseUrl)   document.getElementById('baseUrl').value   = s.baseUrl;
+      if (s.username)  document.getElementById('username').value  = s.username;
     });
 
     document.getElementById('costCenter').addEventListener('keydown', e => {
@@ -563,12 +572,23 @@
               </tr>
             </thead>
             <tbody>
-              ${provisioningRules.map(role => `
-                <tr>
-                  <td class="mono">${esc(role.RoleCode ?? '—')}</td>
+              ${provisioningRules.map(role => {
+                const code = role.RoleCode ?? '';
+                const cMatch  = code.match(/DAV_SEC_(C\d+)/);
+                const segCode = !cMatch && code.startsWith('DAV_SEC_')
+                  ? (code.match(/DAV_SEC_([^_]+)/)?.[1] ?? null)
+                  : null;
+                const roleCodeHtml = cMatch
+                  ? `<a class="role-link" href="#" onclick="event.preventDefault(); lookupHierarchy('${cMatch[1]}')">${esc(code)}</a>`
+                  : segCode
+                    ? `<a class="role-link" href="#" onclick="event.preventDefault(); addToCostCenter('${esc(segCode)}')">${esc(code)}</a>`
+                    : esc(code || '—');
+                return `<tr>
+                  <td class="mono">${roleCodeHtml}</td>
                   <td>${esc(formatDate(role.CreationDate) ?? '—')}</td>
                   <td>${esc(formatDate(role.LastUpdateDate) ?? '—')}</td>
-                </tr>`).join('')}
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>`;
       }
@@ -623,7 +643,8 @@
                   </table>`;
                 })()
           }
-        </div>`;
+        </div>
+`;
     }
 
     function formatDate(dateStr) {
@@ -714,6 +735,54 @@
       const el = document.getElementById('ccResult');
       el.className = 'result error';
       el.innerHTML = `<span class="error-icon">&#9888;</span><span class="error-msg">${esc(msg)}</span>`;
+    }
+
+    // ── Add single cost center to the CC Report field ─────────────────────────
+    //
+    // Called when a non-C DAV_SEC role code link is clicked.
+    // Appends the code to the comma-delimited Cost Center Report field
+    // if it isn't already present.
+
+    function addToCostCenter(code) {
+      const field   = document.getElementById('costCenter');
+      const existing = field.value.split(',').map(s => s.trim()).filter(Boolean);
+      if (!existing.includes(code)) {
+        existing.push(code);
+        field.value = existing.join(', ');
+      }
+    }
+
+    // ── Cost center hierarchy lookup ───────────────────────────────────────────
+    //
+    // Called when a DAV_SEC_C... role code link is clicked.
+    // Runs the hierarchy SOAP report, filters child values where HIERARCHY_PATH
+    // contains _<costCenterCode>_ and CHILD_VALUE doesn't start with 'C',
+    // then populates the Cost Center Report field with the results.
+
+    async function lookupHierarchy(costCenterCode) {
+      const ccResult = document.getElementById('ccResult');
+      ccResult.className = 'result info';
+      ccResult.innerHTML = `Loading hierarchy for ${esc(costCenterCode)}&hellip;`;
+
+      const baseUrl  = document.getElementById('baseUrl').value.trim();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      const result = await window.hcmAPI.ccHierarchy({ baseUrl, username, password, costCenterCode });
+
+      if (!result.ok) {
+        showCCError(`Hierarchy lookup failed: ${esc(result.error)}`);
+        return;
+      }
+
+      if (result.values.length === 0) {
+        showCCError(`No child cost centers found under ${esc(costCenterCode)}.`);
+        return;
+      }
+
+      document.getElementById('costCenter').value = result.values.join(', ');
+      ccResult.className = 'result info';
+      ccResult.innerHTML = `${result.values.length} cost center${result.values.length !== 1 ? 's' : ''} loaded into the Cost Center Report field.`;
     }
 
     // ── Shared helpers ─────────────────────────────────────────────────────────

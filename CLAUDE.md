@@ -87,6 +87,7 @@ Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64'
 |--------|------|
 | Cost Center Manager | `/Custom/Jessamyn/CostCenterManager/DeptCostCenterMgr.xdo` |
 | Auto-Provisioning Rules | `/Custom/Jessamyn/Auto-Provisioning Rules/Auto-Provisioning Rules.xdo` |
+| Cost Center Hierarchy | `/Custom/Jessamyn/AccountHierarchy/CostCenterHierarchy.xdo` |
 
 ### Known Report Columns (upper-cased after normalisation)
 
