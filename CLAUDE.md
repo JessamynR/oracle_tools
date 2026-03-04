@@ -102,6 +102,11 @@ Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64'
 **Auto-Provisioning Rules report:**
 - `MAPPING_NAME`, `DEPARTMENT`, `POSITION_CODE`, `JOB`, `ROLE`
 
+**Cost Center Hierarchy report:**
+- `HIERARCHY_PATH` (col B) — contains the parent cost center code (e.g. `C480`); no surrounding underscores
+- `CHILD_VALUE` (col E) — the child cost center value; falls back to column index 4 if header not found
+- Filter logic: rows where `HIERARCHY_PATH` includes the target code AND `CHILD_VALUE` does not start with `C`
+
 ---
 
 ## Electron Architecture
@@ -201,3 +206,20 @@ electron-builder does **not** auto-include `node_modules` unless specified here.
 | `electron-builder` | `^26.8.1` | Packaging (devDependency) |
 
 No other runtime dependencies. `fs` and `path` are Node built-ins.
+
+---
+
+## Feature History (Post-V1)
+
+### Commit f12772d — Open Sheet button
+- Added **"Open Sheet" button** in the card header (Google-blue `.btn-sheet`) that opens a Google Sheets URL in the user's default browser.
+- Uses `shell.openExternal(url)` from Electron's `shell` module.
+- IPC channel: `shell:openExternal` — handler in `main.js`, exposed via `window.hcmAPI.openExternal(url)`.
+
+### Commit b2e60e3 — Cost center hierarchy lookup + role code links
+- Added **`hcm:ccHierarchy` IPC handler** (`main.js`): runs the SOAP report `CostCenterHierarchy.xdo`, locates the `HIERARCHY_PATH` header row dynamically, finds the `CHILD_VALUE` column (falls back to col E), filters rows where `HIERARCHY_PATH` contains the given code and `CHILD_VALUE` does not start with `C`, returns deduplicated values.
+- **Role Code links in Assigned Roles table** (`index.html`):
+  - `DAV_SEC_C\d+` codes → link triggers `lookupHierarchy(code)`: runs the hierarchy report and **merges** matching child cost centers into the Cost Center Report field (deduplicates with any values already present).
+  - All other `DAV_SEC_*` codes → link triggers `addToCostCenter(code)`: extracts the first segment after `DAV_SEC_` and **appends** it to the Cost Center Report field if not already present.
+  - Non-`DAV_SEC` roles → plain text.
+- Loading/error feedback for hierarchy lookups is shown in the Cost Center Report result area (`#ccResult`).

@@ -7,7 +7,7 @@ const XLSX = require('xlsx');
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 760,
+    width: 1100,
     height: 820,
     resizable: true,
     title: 'Oracle Access Request Lookup',

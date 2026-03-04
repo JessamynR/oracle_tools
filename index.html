@@ -24,7 +24,7 @@
       box-shadow: 0 4px 24px rgba(0,0,0,0.08);
       padding: 2.5rem;
       width: 100%;
-      max-width: 700px;
+      max-width: 1020px;
     }
 
     .card-header {
@@ -493,6 +493,10 @@
       }
 
       window.hcmAPI.saveSettings({ baseUrl, username });
+      document.getElementById('costCenter').value = '';
+      const ccResultEl = document.getElementById('ccResult');
+      ccResultEl.className = 'result';
+      ccResultEl.innerHTML = '';
 
       // Loading state
       btn.disabled = true;
@@ -744,12 +748,18 @@
     // if it isn't already present.
 
     function addToCostCenter(code) {
-      const field   = document.getElementById('costCenter');
+      const field    = document.getElementById('costCenter');
+      const ccResult = document.getElementById('ccResult');
       const existing = field.value.split(',').map(s => s.trim()).filter(Boolean);
-      if (!existing.includes(code)) {
-        existing.push(code);
-        field.value = existing.join(', ');
+      if (existing.includes(code)) {
+        ccResult.className = 'result info';
+        ccResult.innerHTML = `${esc(code)} is already in the Cost Center Report field.`;
+        return;
       }
+      existing.push(code);
+      field.value = existing.join(', ');
+      ccResult.className = 'result info';
+      ccResult.innerHTML = `${esc(code)} added to the Cost Center Report field (${existing.length} total).`;
     }
 
     // ── Cost center hierarchy lookup ───────────────────────────────────────────
@@ -780,9 +790,12 @@
         return;
       }
 
-      document.getElementById('costCenter').value = result.values.join(', ');
+      const field    = document.getElementById('costCenter');
+      const existing = field.value.split(',').map(s => s.trim()).filter(Boolean);
+      const merged   = [...new Set([...existing, ...result.values])];
+      field.value    = merged.join(', ');
       ccResult.className = 'result info';
-      ccResult.innerHTML = `${result.values.length} cost center${result.values.length !== 1 ? 's' : ''} loaded into the Cost Center Report field.`;
+      ccResult.innerHTML = `${result.values.length} cost center${result.values.length !== 1 ? 's' : ''} merged into the Cost Center Report field (${merged.length} total).`;
     }
 
     // ── Shared helpers ─────────────────────────────────────────────────────────
