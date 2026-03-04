@@ -10,7 +10,9 @@
       "Bash(node --version)",
       "Bash(npm --version)",
       "Bash(npm info:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(git add CLAUDE.md index.html main.js preload.js)",
+      "Bash(git commit:*)"
     ]
   }
 }
