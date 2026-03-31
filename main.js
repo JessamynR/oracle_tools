@@ -138,7 +138,7 @@ ipcMain.handle('hcm:ccHierarchy', async (_event, { baseUrl, username, password, 
 
     return { ok: true, values: [...new Set(values)] };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: `Cost center hierarchy lookup failed: ${err.message}` };
   }
 });
 
@@ -175,25 +175,20 @@ ipcMain.handle('hcm:lookup', async (_event, { baseUrl, username, password, searc
     const { positionCode, positionName, personId, personNumber, displayName, legalName, preferredName } =
       await getWorkerInfo(baseUrl, username, password, resolvedPersonNumber);
 
-    let provisioningRules = [];
-    let rulesError = null;
-    try {
-      provisioningRules = await getAssignedRoles(baseUrl, username, password, personId);
-    } catch (err) {
-      rulesError = err.message;
-    }
+    // Fetch assigned roles and auto-provisioning rules in parallel.
+    const [rolesResult, autoProvResult] = await Promise.allSettled([
+      getAssignedRoles(baseUrl, username, password, personId),
+      runAutoProvisioningReport(baseUrl, username, password, positionCode),
+    ]);
 
-    let autoProvRules = [];
-    let autoProvError = null;
-    try {
-      autoProvRules = await runAutoProvisioningReport(baseUrl, username, password, positionCode);
-    } catch (err) {
-      autoProvError = err.message;
-    }
+    const provisioningRules = rolesResult.status === 'fulfilled' ? rolesResult.value : [];
+    const rulesError        = rolesResult.status === 'rejected'  ? rolesResult.reason.message : null;
+    const autoProvRules     = autoProvResult.status === 'fulfilled' ? autoProvResult.value : [];
+    const autoProvError     = autoProvResult.status === 'rejected'  ? autoProvResult.reason.message : null;
 
     return { ok: true, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError, personNumber, displayName, legalName, preferredName };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: `Worker lookup failed: ${err.message}` };
   }
 });
 
@@ -216,8 +211,17 @@ async function fetchWithTimeout(url, options = {}, ms = 30000) {
 //
 // Handles the SOAP envelope, network call, fault detection, and xlsx decoding.
 // Returns the raw SheetJS 2D array for the caller to parse.
+//
+// Results are cached in memory for 5 minutes to avoid re-fetching the same
+// report on repeated lookups within a session.
+
+const soapCache = new Map(); // key: `${baseUrl}|${username}|${reportPath}` → { data, ts }
+const SOAP_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 async function runSoapReport(baseUrl, username, password, reportPath) {
+  const cacheKey = `${baseUrl}|${username}|${reportPath}`;
+  const cached = soapCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < SOAP_CACHE_TTL) return cached.data;
   const SOAP_ENDPOINT = `${baseUrl.replace(/\/$/, '')}/xmlpserver/services/PublicReportService`;
 
   function extractElement(xml, localName) {
@@ -281,7 +285,9 @@ async function runSoapReport(baseUrl, username, password, reportPath) {
   const fileBuffer = Buffer.from(b64, 'base64');
   const workbook   = XLSX.read(fileBuffer, { type: 'buffer' });
   const worksheet  = workbook.Sheets[workbook.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+  const data = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+  soapCache.set(cacheKey, { data, ts: Date.now() });
+  return data;
 }
 
 // ── IPC: hcm:ccreport ────────────────────────────────────────────────────────
@@ -300,7 +306,7 @@ ipcMain.handle('hcm:ccreport', async (_event, { baseUrl, username, password, cos
     const results = await runCostCenterReport(baseUrl, username, password, costCenters);
     return { ok: true, results };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: `Cost center report failed: ${err.message}` };
   }
 });
 
@@ -410,9 +416,10 @@ async function runAutoProvisioningReport(baseUrl, username, password, positionCo
   return rows.filter(r => r[KNOWN_COL] === positionCode);
 }
 
-// ── Worker lookup (ported from lookup-position.js) ───────────────────────────
+// ── Worker lookup ─────────────────────────────────────────────────────────────
 //
-// Returns { positionCode, personId } for the given person number.
+// Returns { positionCode, positionName, personId, personNumber,
+//           displayName, legalName, preferredName } for the given person number.
 
 async function getWorkerInfo(baseUrl, username, password, personNumber) {
   const token = Buffer.from(`${username}:${password}`).toString('base64');
@@ -601,31 +608,28 @@ async function findWorkersByName(baseUrl, token, name) {
     { endpoint: 'publicWorkers', q: `FullName='${escaped}'`          },
   ];
 
-  // Run all attempts and merge unique results by PersonNumber so that legal-name
-  // and preferred-name (KnownAs) matches are both included.
-  const seen = new Map(); // personNumber → candidate
-
-  for (const { endpoint, q } of attempts) {
-    let response;
-    try {
+  // Fire all attempts in parallel and merge unique results by PersonNumber.
+  // Uses a 10s timeout per request — faster than the default 30s for name lookups.
+  const settled = await Promise.allSettled(
+    attempts.map(({ endpoint, q }) => {
       const params = new URLSearchParams({ q, limit: '25' });
       const url = `${baseUrl}/hcmRestApi/resources/latest/${endpoint}?${params}`;
-      response = await fetchWithTimeout(url, { headers });
-    } catch {
-      continue;
-    }
+      return fetchWithTimeout(url, { headers }, 10000)
+        .then(res => res.ok ? res.json() : null)
+        .catch(() => null);
+    })
+  );
 
-    if (!response.ok) continue;
-
-    const data = await response.json();
-    if (data.items) {
-      for (const item of data.items) {
-        if (item.PersonNumber && !seen.has(item.PersonNumber)) {
-          seen.set(item.PersonNumber, {
-            personNumber: item.PersonNumber,
-            displayName : item.DisplayName?.trim() ?? null,
-          });
-        }
+  const seen = new Map();
+  for (const result of settled) {
+    const data = result.status === 'fulfilled' ? result.value : null;
+    if (!data?.items) continue;
+    for (const item of data.items) {
+      if (item.PersonNumber && !seen.has(item.PersonNumber)) {
+        seen.set(item.PersonNumber, {
+          personNumber: item.PersonNumber,
+          displayName : item.DisplayName?.trim() ?? null,
+        });
       }
     }
   }

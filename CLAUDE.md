@@ -187,22 +187,25 @@ npm run build       # both
 ### Files Array
 Must explicitly include all runtime dependencies:
 ```json
-"files": ["main.js", "preload.js", "index.html", "assets/**",
+"files": ["main.js", "preload.js", "renderer.js", "index.html", "assets/**",
           "node_modules/xlsx/**", "node_modules/electron-updater/**"]
 ```
-electron-builder does **not** auto-include `node_modules` unless specified here.
+electron-builder does **not** auto-include `node_modules` unless specified here. Every file the app loads at runtime must be listed — forgetting `renderer.js` breaks the UI in packaged builds.
 
 ---
 
-## UI Patterns (index.html)
+## UI Patterns
 
-- Single self-contained HTML file (no build step, no framework)
+- `index.html` — markup and styles only; no inline scripts or event handlers
+- `renderer.js` — all UI logic; loaded via `<script src="renderer.js">` (required for CSP compliance)
 - CSS uses system font stack: `-apple-system, BlinkMacSystemFont, "Segoe UI"`
 - Oracle red brand color: `#c74634`
 - Result areas are hidden (`display:none`) until populated, then toggled with CSS classes: `.result.success` / `.result.error` / `.result.info`
 - Loading state on buttons: add class `loading` — CSS hides label, shows spinner
 - **HTML injection prevention:** always pass user-visible strings through `esc()` which escapes `&`, `<`, `>`, `"`
-- Enter key on any field triggers the relevant action via `keydown` listeners
+- Enter key on any field triggers the relevant action via `keydown` listeners in `renderer.js`
+- Button clicks wired with `addEventListener` in `renderer.js` — no `onclick` attributes in HTML
+- Dynamic rows (candidates, role links) use `data-*` attributes + delegated event listeners — no inline `onclick`
 
 ---
 
