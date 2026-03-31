@@ -21,7 +21,11 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 1. Go to **https://github.com/JessamynR/oracle_tools/releases**
 2. Under the latest release, download the file ending in `.dmg`
 3. Open the `.dmg` file and drag **Oracle Access Request Lookup** into your Applications folder
-4. On first launch, macOS will block it because the app isn't code-signed — do **not** double-click; instead, **right-click** the app in Applications → **Open** → **Open**
+4. On first launch, macOS will block the app because it isn't code-signed. To allow it:
+   - Double-click the app — it will be blocked with a warning
+   - Open **System Settings** → **Privacy & Security**
+   - Scroll to the Security section and click **Open Anyway** next to the message about Oracle Access Request Lookup
+   - Enter your Mac password if prompted, then click **Open Anyway** again
    - You only need to do this once; future launches work normally
 5. Enter your HCM Base URL, username, and password — the URL and username will be remembered; the password must be re-entered each session
 6. When a new version is available, a notification dialog will appear at startup — click **Download** to open the releases page, then follow steps 2–3 above to update
