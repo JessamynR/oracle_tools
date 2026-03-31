@@ -1,4 +1,5 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs   = require('fs');
 const XLSX = require('xlsx');
@@ -23,6 +24,30 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+
+  // Only check for updates in a packaged build, not during development.
+  if (app.isPackaged) {
+    if (process.platform === 'darwin') {
+      // Mac: can't auto-install without code signing — check and notify manually.
+      autoUpdater.autoDownload = false;
+      autoUpdater.checkForUpdates();
+      autoUpdater.on('update-available', info => {
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Update Available',
+          message: `Version ${info.version} is available.`,
+          detail: 'Download the new version from GitHub and replace the app in your Applications folder.',
+          buttons: ['Download', 'Later'],
+          defaultId: 0,
+        }).then(({ response }) => {
+          if (response === 0) shell.openExternal('https://github.com/JessamynR/oracle_tools/releases/latest');
+        });
+      });
+    } else {
+      // Windows: full auto-update supported.
+      autoUpdater.checkForUpdatesAndNotify();
+    }
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

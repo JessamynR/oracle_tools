@@ -13,18 +13,29 @@
     "appId": "com.yourorg.oracle-access-request-lookup",
     "productName": "Oracle Access Request Lookup",
     "icon": "assets/icon",
+    "publish": {
+      "provider": "github",
+      "owner": "JessamynR",
+      "repo": "oracle_tools"
+    },
     "files": [
       "main.js",
       "preload.js",
       "index.html",
       "assets/**",
-      "node_modules/xlsx/**"
+      "node_modules/xlsx/**",
+      "node_modules/electron-updater/**"
     ],
     "mac": {
       "category": "public.app-category.business",
       "icon": "assets/icon.icns",
       "target": [
-        { "target": "dmg", "arch": ["universal"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
       ]
     },
     "dmg": {
@@ -33,7 +44,12 @@
     "win": {
       "icon": "assets/icon.ico",
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
@@ -47,6 +63,7 @@
     "electron-builder": "^26.8.1"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "xlsx": "^0.18.5"
   }
 }
