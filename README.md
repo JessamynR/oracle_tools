@@ -47,13 +47,14 @@ Confirm GitHub Actions has permission to publish releases:
    git add package.json
    git commit -m "v1.1.0"
    ```
-4. Create a tag matching the new version (must start with `v`):
+4. Push the commit to main first:
+   ```bash
+   git push origin main
+   ```
+5. Create and push the tag (must start with `v`):
    ```bash
    git tag v1.1.0
-   ```
-5. Push the commit and tag:
-   ```bash
-   git push origin main --tags
+   git push origin v1.1.0
    ```
 6. GitHub Actions will automatically build the Mac DMG and Windows EXE in parallel and attach both to a new GitHub Release — monitor progress at **https://github.com/JessamynR/oracle_tools/actions**
 7. Once the workflow completes, Windows users will be prompted to update automatically on their next launch; Mac users will see a notification dialog
