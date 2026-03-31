@@ -15,6 +15,7 @@ Files:
   index.html    — Single-page UI (HTML/CSS/JS, no framework)
   package.json  — Build config for electron-builder
   assets/       — App icons (icon.icns for Mac, icon.ico for Windows)
+  .github/workflows/build.yml — GitHub Actions release pipeline
 
 
 ORACLE HCM REST API
@@ -51,6 +52,8 @@ Key endpoints used:
       Always follow the self link and query the child resource directly with
       an explicit limit to get all roles.
     - Returns: RoleCode, CreationDate, LastUpdateDate
+    - Only DAV_SEC_* and *REPORTS* role codes are returned — other roles
+      (HR, payroll, etc.) are filtered out as irrelevant to access reviews.
 
   /roleProvisioningRules  (not yet implemented — future candidate)
     - Can filter auto-provisioning rules by position code
@@ -68,10 +71,20 @@ Envelope structure:
       <reportAbsolutePath>/Custom/path/to/Report.xdo</reportAbsolutePath>
       <attributeFormat>xlsx</attributeFormat>
       <sizeOfDataChunkDownload>-1</sizeOfDataChunkDownload>
+        <!-- -1 = return entire report in one response, no streaming/pagination -->
     </reportRequest>
     <userID>username</userID>
     <password>password</password>
   </runReport>
+
+IMPORTANT — fault handling:
+  Oracle BI Publisher returns HTTP 200 even when a report fails (e.g. wrong
+  path, permission denied). Always check for a SOAP <Fault> element in the
+  response body BEFORE checking response.ok. The real error is in the fault,
+  not the HTTP status code.
+
+Report path gotcha: the .xdo extension is required in reportAbsolutePath.
+  Omitting it returns a permission error (not "not found"), which is misleading.
 
 Response parsing:
   - Report data is returned as base64 in the <reportBytes> element
@@ -86,8 +99,9 @@ Report row structure (varies):
     by looking for a known column name rather than assuming a fixed row index
 
 Report paths used in this project:
-  Cost Center Manager:    /Custom/Jessamyn/CostCenterManager/DeptCostCenterMgr.xdo
-  Auto-Provisioning Rules: /Custom/Jessamyn/Auto-Provisioning Rules/Auto-Provisioning Rules.xdo
+  Cost Center Manager:      /Custom/Jessamyn/CostCenterManager/DeptCostCenterMgr.xdo
+  Auto-Provisioning Rules:  /Custom/Jessamyn/Auto-Provisioning Rules/Auto-Provisioning Rules.xdo
+  Cost Center Hierarchy:    /Custom/Jessamyn/AccountHierarchy/CostCenterHierarchy.xdo
 
 Known report column names (upper-cased after normalisation):
   Cost Center report:
@@ -101,6 +115,31 @@ Known report column names (upper-cased after normalisation):
 
   Auto-Provisioning Rules report:
     MAPPING_NAME, DEPARTMENT, POSITION_CODE, JOB, ROLE
+
+  Cost Center Hierarchy report:
+    HIERARCHY_PATH (col B) — contains parent cost center codes (e.g. C480);
+                             no surrounding underscores, matched as substring
+    CHILD_VALUE    (col E) — child cost center value; falls back to col index 4
+                             if header not found
+    Filter logic: rows where HIERARCHY_PATH includes the target code AND
+    CHILD_VALUE does not start with 'C'. Values starting with 'C' are
+    intermediate parent nodes in the Oracle hierarchy tree, not real cost centers.
+
+
+ROLE CODE LINK BEHAVIOUR
+------------------------
+In the Assigned Roles table, DAV_SEC_* role codes are rendered as clickable links:
+
+  DAV_SEC_C<digits>  (e.g. DAV_SEC_C480)
+    — Hierarchical cost center group. Clicking runs the CostCenterHierarchy
+      SOAP report and merges all matching child cost centers into the Cost
+      Center Report field (deduplicates with any values already present).
+
+  DAV_SEC_<other>  (e.g. DAV_SEC_1234)
+    — Direct cost center code. Clicking appends the segment after DAV_SEC_
+      to the Cost Center Report field if not already present.
+
+  All other role codes are shown as plain text.
 
 
 ELECTRON ARCHITECTURE
@@ -155,12 +194,48 @@ Build commands:
   npm run build:win   — Windows installer only
   npm run build       — both
 
-Cross-platform note: building Windows on a Mac requires Wine.
-Best practice is to run build:win on a Windows machine.
+Cross-platform builds: handled automatically by GitHub Actions (see DEPLOYMENT
+section below). No Wine or Windows machine required.
 
 Files array must explicitly include all runtime dependencies:
-  "files": ["main.js", "preload.js", "index.html", "assets/**", "node_modules/xlsx/**"]
+  "files": ["main.js", "preload.js", "index.html", "assets/**",
+            "node_modules/xlsx/**", "node_modules/electron-updater/**"]
   electron-builder does NOT auto-include node_modules unless specified here.
+
+
+DEPLOYMENT & AUTO-UPDATES
+--------------------------
+Releases are built and published via GitHub Actions (.github/workflows/build.yml).
+The workflow triggers on any v* tag push and runs two parallel jobs:
+  - macos-latest  → universal DMG
+  - windows-latest → NSIS .exe
+Both are published as assets on a GitHub Release using the built-in GH_TOKEN.
+
+To release a new version:
+  1. Bump "version" in package.json (semver: patch for fixes, minor for features)
+  2. git add package.json && git commit -m "v1.x.x"
+  3. git tag v1.x.x && git push origin main --tags
+
+First-time setup: repo → Settings → Actions → General →
+  set Workflow permissions to "Read and write permissions".
+
+Auto-update behaviour (electron-updater, runtime dependency):
+  Windows: checkForUpdatesAndNotify() — downloads and installs automatically;
+           user is prompted to restart.
+  Mac:     autoDownload=false + update-available event — shows a native dialog
+           with a Download button (opens GitHub releases page) and a Later button.
+           Mac cannot auto-install because electron-updater requires a signed
+           build to replace a running app on macOS.
+
+Update check runs inside an app.isPackaged guard so it is skipped during
+development (npm start).
+
+Code signing: NOT currently configured.
+  Without signing:
+    Mac:     first launch requires right-click → Open to bypass Gatekeeper
+    Windows: SmartScreen shows "unknown publisher" warning on install
+  Adding signing later requires no code changes — electron-builder handles it
+  via environment variables (Apple Developer cert for Mac, CA cert for Windows).
 
 
 UI PATTERNS (index.html)
@@ -172,14 +247,16 @@ UI PATTERNS (index.html)
   CSS classes: .result.success / .result.error / .result.info
 - Loading state on buttons: add class 'loading' — CSS hides label, shows spinner
 - HTML injection prevention: always pass user-visible strings through esc()
-  function that escapes &, <, >, "
+  function that escapes &, <, >, " — required on every innerHTML write to
+  prevent XSS from API response content
 - Enter key on any field triggers the relevant action via keydown listeners
 
 
 DEPENDENCIES
 ------------
-  xlsx (SheetJS) ^0.18.5  — in-memory Excel parsing, no temp files needed
-  electron ^40.6.0
-  electron-builder ^26.8.1 (devDependency)
+  xlsx (SheetJS) ^0.18.5      — in-memory Excel parsing, no temp files needed
+  electron-updater ^6.8.3     — auto-update support (runtime dependency)
+  electron ^40.6.0            — (devDependency)
+  electron-builder ^26.8.1    — (devDependency)
 
-No other runtime dependencies. fs, path are Node built-ins.
+fs and path are Node built-ins.
