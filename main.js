@@ -30,6 +30,7 @@ app.whenReady().then(() => {
     if (process.platform === 'darwin') {
       // Mac: can't auto-install without code signing — check and notify manually.
       autoUpdater.autoDownload = false;
+      autoUpdater.on('error', err => console.error('[updater] error:', err.message));
       autoUpdater.checkForUpdates();
       autoUpdater.on('update-available', info => {
         dialog.showMessageBox({
