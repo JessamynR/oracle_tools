@@ -230,6 +230,7 @@ Releases are built by **GitHub Actions** (`.github/workflows/build.yml`). The wo
 - `fail-fast: false` on the matrix — both platform jobs run independently; one failure does not cancel the other.
 - Each runner uses its own platform-specific script (`build:mac` / `build:win`). Never use `npm run build` (which targets both platforms) in CI — the Mac runner cannot build Windows targets and vice versa.
 - `icon.ico` must be at least 256x256. The current file was regenerated from `assets/My Oracle App image.png` (1024x1024 source).
+- `releaseType: "release"` is set in the publish config — releases go live automatically when both build jobs complete. Removing this reverts to draft behaviour.
 
 **To ship a release:**
 ```bash
