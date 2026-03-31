@@ -66,6 +66,8 @@ function settingsPath() {
 }
 
 
+ipcMain.handle('app:version', () => app.getVersion());
+
 ipcMain.handle('hcm:getSettings', () => {
   try {
     return JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));

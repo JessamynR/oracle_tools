@@ -2,10 +2,14 @@
 document.getElementById('lookupBtn').addEventListener('click', lookup);
 document.getElementById('ccBtn').addEventListener('click', runCCReport);
 
-// ── Restore saved settings on startup ──────────────────────────────────────
+// ── Restore saved settings and show version on startup ─────────────────────
 window.hcmAPI.getSettings().then(s => {
   if (s.baseUrl)   document.getElementById('baseUrl').value   = s.baseUrl;
   if (s.username)  document.getElementById('username').value  = s.username;
+});
+
+window.hcmAPI.appVersion().then(v => {
+  document.getElementById('appVersion').textContent = `v${v}`;
 });
 
 document.getElementById('costCenter').addEventListener('keydown', e => {
