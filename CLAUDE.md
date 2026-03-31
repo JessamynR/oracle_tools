@@ -235,6 +235,8 @@ Releases are built by **GitHub Actions** (`.github/workflows/build.yml`). The wo
 - `icon.ico` must be at least 256x256. The current file was regenerated from `assets/My Oracle App image.png` (1024x1024 source).
 - `releaseType: "release"` is set in the publish config — releases go live automatically when both build jobs complete. Removing this reverts to draft behaviour.
 
+**IMPORTANT — never run `npm run build` locally to publish.** Pushing a `v*` tag triggers GitHub Actions, which builds and publishes both Mac and Windows automatically. Running the build locally with `--publish always` after the tag is pushed will fail with a 422 error because the GitHub Release already exists. If the user pastes GitHub Actions log output containing `npm run build:mac -- --publish always`, that is CI output to be read, not a command to execute.
+
 **To ship a release:**
 ```bash
 # 1. Bump "version" in package.json (semver: patch for fixes, minor for features)
