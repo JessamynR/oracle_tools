@@ -204,8 +204,46 @@ electron-builder does **not** auto-include `node_modules` unless specified here.
 | `xlsx` (SheetJS) | `^0.18.5` | In-memory Excel parsing, no temp files needed |
 | `electron` | `^40.6.0` | Desktop app framework |
 | `electron-builder` | `^26.8.1` | Packaging (devDependency) |
+| `electron-updater` | `^6.8.3` | Auto-update support (runtime dependency) |
 
-No other runtime dependencies. `fs` and `path` are Node built-ins.
+`fs` and `path` are Node built-ins.
+
+---
+
+## Deployment & Updates
+
+### Release pipeline
+
+Releases are built by **GitHub Actions** (`.github/workflows/build.yml`). The workflow triggers on any `v*` tag push and runs two parallel jobs — one on `macos-latest` producing a universal DMG, one on `windows-latest` producing an NSIS `.exe` — then publishes both as assets on a GitHub Release via `GH_TOKEN`.
+
+**To ship a release:**
+```bash
+# 1. Bump "version" in package.json (semver: patch for fixes, minor for features)
+# 2. Commit, tag, and push:
+git add package.json && git commit -m "v1.x.x"
+git tag v1.x.x && git push origin main --tags
+```
+
+First-time setup: repo → Settings → Actions → General → set Workflow permissions to **Read and write**.
+
+### Auto-update behaviour
+
+`electron-updater` is initialised in `main.js` inside an `if (app.isPackaged)` guard so it never runs during `npm start`.
+
+| Platform | Behaviour |
+|----------|-----------|
+| **Windows** | `checkForUpdatesAndNotify()` — downloads and installs silently; user is prompted to restart |
+| **Mac** | `autoDownload = false` + `update-available` event — shows a native `dialog.showMessageBox` with **Download** (opens releases page) and **Later** buttons |
+
+Mac cannot auto-install because `electron-updater` requires a code-signed build to replace a running app on macOS. This is a known limitation until code signing is added.
+
+### Code signing (not yet configured)
+
+Without code signing:
+- **Mac:** first launch requires right-click → Open to bypass Gatekeeper; subsequent launches are normal
+- **Windows:** SmartScreen shows an "unknown publisher" warning on install; users click More info → Run anyway
+
+Adding code signing later requires an Apple Developer account (Mac) and a certificate from a CA such as DigiCert or Sectigo (Windows). `electron-builder` handles the signing and notarization steps via environment variables — no code changes needed.
 
 ---
 
