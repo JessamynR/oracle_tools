@@ -12,6 +12,8 @@ Electron desktop app (Mac + Windows) that queries Oracle HCM Cloud via REST API 
 | `index.html` | Single-page UI (HTML/CSS/JS, no framework) |
 | `package.json` | Build config for electron-builder |
 | `assets/` | App icons (`icon.icns` for Mac, `icon.ico` for Windows) |
+| `.github/workflows/build.yml` | GitHub Actions release pipeline (builds Mac + Windows in parallel) |
+| `control-budget-app/` | Standalone stripped-down app for the Control Budget report only |
 
 ---
 
@@ -49,6 +51,7 @@ Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64'
 - Access via: `{selfHref}/child/userAccountRoles?limit=500`
 - **Important:** Using `expand` on the parent only returns ~25 rows (default page). Always follow the self link and query the child resource directly with an explicit limit.
 - Returns: `RoleCode`, `CreationDate`, `LastUpdateDate`
+- Only `DAV_SEC_*` and `*REPORTS*` codes are surfaced in the UI — other roles (HR, payroll, etc.) are filtered out as irrelevant to access reviews.
 
 ---
 
@@ -65,11 +68,16 @@ Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64'
     <reportAbsolutePath>/Custom/path/to/Report.xdo</reportAbsolutePath>
     <attributeFormat>xlsx</attributeFormat>
     <sizeOfDataChunkDownload>-1</sizeOfDataChunkDownload>
+    <!-- -1 = return entire report in one response, no streaming/pagination -->
   </reportRequest>
   <userID>username</userID>
   <password>password</password>
 </runReport>
 ```
+
+### SOAP Gotchas
+- **`.xdo` extension is required** in `reportAbsolutePath`. Omitting it returns a permission error (not "not found"), which is misleading.
+- **Fault check must come before HTTP status check.** Oracle BI Publisher returns HTTP 200 even when a report fails (wrong path, permission denied). Always check the response body for a `<Fault>` element first — the real error is there, not in the HTTP status code.
 
 ### Response Parsing
 - Report data is returned as base64 in the `<reportBytes>` element
@@ -167,7 +175,7 @@ fs.writeFileSync(settingsPath, JSON.stringify(data), 'utf8')
 
 - **Mac:** universal = single DMG that runs on both Intel and Apple Silicon
 - **Windows:** NSIS produces a standard `.exe` installer; `oneClick: false` lets users choose install directory
-- Cross-platform note: building Windows on a Mac requires Wine — best practice is to run `build:win` on a Windows machine
+- **Cross-platform builds:** handled by GitHub Actions — no Wine or Windows machine needed. See Deployment & Updates section.
 
 ### Build Commands
 ```
@@ -179,7 +187,8 @@ npm run build       # both
 ### Files Array
 Must explicitly include all runtime dependencies:
 ```json
-"files": ["main.js", "preload.js", "index.html", "assets/**", "node_modules/xlsx/**"]
+"files": ["main.js", "preload.js", "index.html", "assets/**",
+          "node_modules/xlsx/**", "node_modules/electron-updater/**"]
 ```
 electron-builder does **not** auto-include `node_modules` unless specified here.
 
@@ -261,3 +270,21 @@ Adding code signing later requires an Apple Developer account (Mac) and a certif
   - All other `DAV_SEC_*` codes → link triggers `addToCostCenter(code)`: extracts the first segment after `DAV_SEC_` and **appends** it to the Cost Center Report field if not already present.
   - Non-`DAV_SEC` roles → plain text.
 - Loading/error feedback for hierarchy lookups is shown in the Cost Center Report result area (`#ccResult`).
+
+### Commit 481eb9f — UX improvements
+- Widened `BrowserWindow` to 1100px and `.card` max-width to 1020px for more horizontal space in results tables.
+- Hierarchy lookup (`lookupHierarchy`) now **merges** child cost centers into the existing Cost Center Report field instead of replacing it; results are deduplicated.
+- New Lookup clears the Cost Center Report field and its status message so stale hierarchy results don't carry over.
+- Individual DAV_SEC non-C role link clicks now show inline feedback in `#ccResult` ("added" or "already in field").
+
+### Commit 2143b75 — Auto-update support and GitHub Actions release pipeline
+- Added `electron-updater` (runtime dependency); initialised inside `if (app.isPackaged)` guard.
+- **Windows:** `checkForUpdatesAndNotify()` — full auto-update.
+- **Mac:** `autoDownload = false` + `update-available` event → native `dialog.showMessageBox` with Download / Later buttons. Auto-install not possible without code signing.
+- Added `publish` config in `package.json` pointing to `JessamynR/oracle_tools`.
+- Added `.github/workflows/build.yml`: triggers on `v*` tags, builds Mac DMG and Windows EXE in parallel, publishes both to GitHub Releases via `GH_TOKEN`.
+
+### Commit aad00e9 — Repo cleanup
+- Removed `BUILD_WINDOWS.txt` (superseded by README + GitHub Actions).
+- Removed `lookup-position.js` (original CLI prototype; logic fully ported into `main.js`).
+- Untracked `.claude/settings.local.json`; added `.claude/` and `*.zip` to `.gitignore`.
