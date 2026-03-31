@@ -48,8 +48,6 @@ Builds are created entirely by **GitHub Actions** — you never run the build co
 
 Tell Claude: **"commit, push, and build"** (or just **"build"** if changes are already committed). Claude will handle everything — bumping the version, committing, pushing main, creating and pushing the tag — which triggers the GitHub Actions release pipeline.
 
-Never paste GitHub Actions log output and ask Claude to run the commands shown. That output is from the CI runner, not instructions for local execution.
-
 ### If you are doing it yourself
 
 1. Make and test your code changes locally with `npm start`
