@@ -16,7 +16,8 @@
     "publish": {
       "provider": "github",
       "owner": "JessamynR",
-      "repo": "oracle_tools"
+      "repo": "oracle_tools",
+      "releaseType": "release"
     },
     "files": [
       "main.js",
