@@ -32,6 +32,88 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 
 ---
 
+## Setting Up for a New Oracle Instance
+
+### Prerequisites
+
+- Node.js 18 or later
+- Git
+- A GitHub account with access to the repository
+
+### 1. Fork the Repository
+
+Fork `JessamynR/oracle_tools` to your own GitHub account. This gives you your own copy to modify and build from.
+
+Clone it locally:
+```bash
+git clone https://github.com/<your-username>/oracle_tools.git
+cd oracle_tools
+npm install
+```
+
+### 2. Update the Environment URLs
+
+Open `index.html` and find the environment dropdown (around line 425). Replace `exci` in each URL with your organisation's equivalent segment:
+
+```html
+<option value="https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com">Production</option>
+<option value="https://fa-exci-dev1-saasfaprod1.fa.ocs.oraclecloud.com">Dev 1</option>
+<option value="https://fa-exci-dev3-saasfaprod1.fa.ocs.oraclecloud.com">Dev 3</option>
+<option value="https://fa-exci-test-saasfaprod1.fa.ocs.oraclecloud.com">Test</option>
+```
+
+Add or remove environment options to match your own instance — the names (Production, Dev 1, etc.) can be anything meaningful to your team.
+
+### 3. Import the Reports into Your Oracle Instance
+
+Download the `.catalog` report files from the repository and import them into your Oracle BI Publisher instance. Once imported, note the path where each report was saved — you'll need these in the next step.
+
+### 4. Update the Report Paths
+
+Open `main.js` and update the three report paths to match where you imported them. Search for `Custom/Jessamyn` — there are four occurrences:
+
+| Line | Report |
+|------|--------|
+| 103 | Cost Center Hierarchy |
+| 335 | Cost Center Manager |
+| 403 | Auto-Provisioning Rules |
+
+Replace the paths with your own, keeping the `.xdo` extension:
+```js
+'/Custom/YourFolder/CostCenterManager/DeptCostCenterMgr.xdo'
+'/Custom/YourFolder/Auto-Provisioning Rules/Auto-Provisioning Rules.xdo'
+'/Custom/YourFolder/AccountHierarchy/CostCenterHierarchy.xdo'
+```
+
+> **Important:** The `.xdo` extension is required. Omitting it causes a misleading permission error from Oracle rather than a "not found" error.
+
+### 5. Test Locally
+
+```bash
+npm start
+```
+
+Enter one of your environment URLs, your Oracle username, and password. Try looking up a known worker by person number to confirm the connection works before testing name search and reports.
+
+### 6. Set Up Your Release Pipeline
+
+In your forked GitHub repository:
+- Go to **Settings** → **Actions** → **General**
+- Set Workflow permissions to **Read and write permissions**
+
+Then build and release your first version:
+```bash
+git add .
+git commit -m "v1.0.0: configure for <org name> Oracle instance"
+git push origin main
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions will build the Mac and Windows installers automatically and publish them as a release.
+
+---
+
 ## For the Developer — Releasing a New Version
 
 ### Prerequisites (first time only)
