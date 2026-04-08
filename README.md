@@ -6,7 +6,7 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 
 ## For Windows Users
 
-1. Go to **https://github.com/JessamynR/oracle_tools/releases**
+1. Go to **https://github.com/DavidsonCollege/oracle_role_costcenter_lookup/releases**
 2. Under the latest release, download the file ending in `.exe`
 3. Run the installer — Windows will show a "Windows protected your PC" SmartScreen warning because the app isn't code-signed; click **More info** → **Run anyway**
 4. Follow the installer prompts; choose an install directory if prompted
@@ -18,7 +18,7 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 
 ## For Mac Users
 
-1. Go to **https://github.com/JessamynR/oracle_tools/releases**
+1. Go to **https://github.com/DavidsonCollege/oracle_role_costcenter_lookup/releases**
 2. Under the latest release, download the file ending in `.dmg`
 3. Open the `.dmg` file and drag **Oracle Access Request Lookup** into your Applications folder
 4. On first launch, macOS will block the app because it isn't code-signed. To allow it:
@@ -46,12 +46,12 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 
 ### 1. Fork the Repository
 
-Fork `JessamynR/oracle_tools` to your own GitHub account. This gives you your own copy to modify and build from.
+Fork `DavidsonCollege/oracle_role_costcenter_lookup` to your own GitHub account. This gives you your own copy to modify and build from.
 
 Clone it locally:
 ```bash
-git clone https://github.com/<your-username>/oracle_tools.git
-cd oracle_tools
+git clone https://github.com/<your-username>/oracle_role_costcenter_lookup.git
+cd oracle_role_costcenter_lookup
 npm install
 ```
 
@@ -151,5 +151,5 @@ Tell Claude: **"commit, push, and build"** (or just **"build"** if changes are a
    git tag v1.1.0
    git push origin v1.1.0
    ```
-5. GitHub Actions will automatically build both platforms and publish the release — monitor progress at **https://github.com/JessamynR/oracle_tools/actions**
+5. GitHub Actions will automatically build both platforms and publish the release — monitor progress at **https://github.com/DavidsonCollege/oracle_role_costcenter_lookup/actions**
 6. Once the workflow completes, Windows users will be prompted to update automatically on their next launch; Mac users will see a notification dialog

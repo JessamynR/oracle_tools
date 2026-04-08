@@ -15,8 +15,8 @@
     "icon": "assets/icon",
     "publish": {
       "provider": "github",
-      "owner": "JessamynR",
-      "repo": "oracle_tools",
+      "owner": "DavidsonCollege",
+      "repo": "oracle_role_costcenter_lookup",
       "releaseType": "release"
     },
     "files": [
